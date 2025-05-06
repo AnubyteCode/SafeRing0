@@ -1,9 +1,15 @@
+﻿// SafeRing0Driver.c (KMDF SYS)
+// ─────────────────────────────────────────────────────────────
+
 #include <ntddk.h>
 #include <wdf.h>
-#include <intrin.h>    // for __readmsr, __outdword, __indword
+#include <intrin.h>    // __readmsr, __writemsr, __readpmc, __outdword, __indword
 
-#define IOCTL_READ_MSR  CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_READ_ACCESS)
-#define IOCTL_READ_PCI  CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_READ_ACCESS)
+#define IOCTL_READ_MSR           CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_READ_ACCESS)
+#define IOCTL_READ_PCI           CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_READ_ACCESS)
+#define IOCTL_WRITE_PCI          CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_WRITE_ACCESS)
+#define IOCTL_READ_PMC           CTL_CODE(FILE_DEVICE_UNKNOWN, 0x803, METHOD_BUFFERED, FILE_READ_ACCESS)
+#define IOCTL_READ_MSR_AFFINITY  CTL_CODE(FILE_DEVICE_UNKNOWN, 0x804, METHOD_BUFFERED, FILE_READ_ACCESS)
 
 typedef struct _MSR_REQUEST {
     ULONG Index;
@@ -11,135 +17,180 @@ typedef struct _MSR_REQUEST {
 } MSR_REQUEST, * PMSR_REQUEST;
 
 typedef struct _PCI_REQUEST {
-    UCHAR Bus, Device, Function;
-    UCHAR Offset;
-    ULONG Data;    // 32-bit read
+    UCHAR  Bus, Device, Function;
+    UCHAR  Offset;
+    ULONG  Data;
 } PCI_REQUEST, * PPCI_REQUEST;
 
-// Forward declarations of our event callbacks
+typedef struct _PMC_REQUEST {
+    ULONG CounterIndex;
+    ULONGLONG Value;
+} PMC_REQUEST, * PPMC_REQUEST;
+
+// Driver declarations
 DRIVER_INITIALIZE DriverEntry;
-EVT_WDF_DRIVER_DEVICE_ADD     EvtDeviceAdd;
+EVT_WDF_DRIVER_DEVICE_ADD EvtDeviceAdd;
 EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL EvtIoDeviceControl;
 
-// ----------------------------------------------------------------------------
-// DriverEntry: standard KMDF entry point
-// ----------------------------------------------------------------------------
 NTSTATUS
-NTAPI
 DriverEntry(
-    _In_ PDRIVER_OBJECT  DriverObject,
-    _In_ PUNICODE_STRING RegistryPath
+    PDRIVER_OBJECT  DriverObject,
+    PUNICODE_STRING RegistryPath
 )
 {
     WDF_DRIVER_CONFIG config;
     WDF_DRIVER_CONFIG_INIT(&config, EvtDeviceAdd);
-
-    // Create the framework driver object
-    return WdfDriverCreate(
-        DriverObject,
-        RegistryPath,
-        WDF_NO_OBJECT_ATTRIBUTES,
-        &config,
-        WDF_NO_HANDLE
-    );
+    return WdfDriverCreate(DriverObject, RegistryPath, WDF_NO_OBJECT_ATTRIBUTES, &config, WDF_NO_HANDLE);
 }
 
-// ----------------------------------------------------------------------------
-// EvtDeviceAdd: called when PnP manager enumerates our device (Root\SafeRing0)
-// ----------------------------------------------------------------------------
 NTSTATUS
 EvtDeviceAdd(
-    _In_    WDFDRIVER       Driver,
-    _Inout_ PWDFDEVICE_INIT DeviceInit
+    WDFDRIVER Driver,
+    PWDFDEVICE_INIT DeviceInit
 )
 {
     UNREFERENCED_PARAMETER(Driver);
-
     NTSTATUS status;
     WDFDEVICE device;
-    WDF_IO_QUEUE_CONFIG  ioQueueConfig;
+    WDF_IO_QUEUE_CONFIG ioQueueConfig;
 
-    // Use buffered I/O
     WdfDeviceInitSetIoType(DeviceInit, WdfDeviceIoBuffered);
+    status = WdfDeviceCreate(&DeviceInit, WDF_NO_OBJECT_ATTRIBUTES, &device);
+    if (!NT_SUCCESS(status)) return status;
 
-    // Create the WDFDEVICE
-    status = WdfDeviceCreate(
-        &DeviceInit,
-        WDF_NO_OBJECT_ATTRIBUTES,
-        &device
-    );
-    if (!NT_SUCCESS(status)) {
-        return status;
-    }
-
-    // Configure a default I/O queue for DEVICE_CONTROL
-    WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(
-        &ioQueueConfig,
-        WdfIoQueueDispatchSequential
-    );
+    WDF_IO_QUEUE_CONFIG_INIT_DEFAULT_QUEUE(&ioQueueConfig, WdfIoQueueDispatchSequential);
     ioQueueConfig.EvtIoDeviceControl = EvtIoDeviceControl;
 
-    status = WdfIoQueueCreate(
-        device,
-        &ioQueueConfig,
-        WDF_NO_OBJECT_ATTRIBUTES,
-        WDF_NO_HANDLE
-    );
-    return status;
+    return WdfIoQueueCreate(device, &ioQueueConfig, WDF_NO_OBJECT_ATTRIBUTES, WDF_NO_HANDLE);
 }
 
-// ----------------------------------------------------------------------------
-// EvtIoDeviceControl: handle IOCTL_READ_MSR and IOCTL_READ_PCI
-// ----------------------------------------------------------------------------
 VOID
 EvtIoDeviceControl(
-    _In_ WDFQUEUE   Queue,
-    _In_ WDFREQUEST Request,
-    _In_ size_t     OutputBufferLength,
-    _In_ size_t     InputBufferLength,
-    _In_ ULONG      IoControlCode
+    WDFQUEUE   Queue,
+    WDFREQUEST Request,
+    size_t     OutputBufferLength,
+    size_t     InputBufferLength,
+    ULONG      IoControlCode
 )
 {
     UNREFERENCED_PARAMETER(Queue);
-
     NTSTATUS status = STATUS_INVALID_DEVICE_REQUEST;
-    size_t   retlen = 0;
+    size_t retlen = 0;
 
+    // READ_MSR
     if (IoControlCode == IOCTL_READ_MSR &&
         InputBufferLength >= sizeof(MSR_REQUEST) &&
         OutputBufferLength >= sizeof(MSR_REQUEST))
     {
-        PMSR_REQUEST req;
-        if (NT_SUCCESS(WdfRequestRetrieveInputBuffer(Request, sizeof(*req), (PVOID*)&req, NULL)) &&
-            NT_SUCCESS(WdfRequestRetrieveOutputBuffer(Request, sizeof(*req), (PVOID*)&req, NULL)))
+        PMSR_REQUEST inReq = NULL, outReq = NULL;
+        if (NT_SUCCESS(WdfRequestRetrieveInputBuffer(Request, sizeof(MSR_REQUEST), (PVOID*)&inReq, NULL)) &&
+            NT_SUCCESS(WdfRequestRetrieveOutputBuffer(Request, sizeof(MSR_REQUEST), (PVOID*)&outReq, NULL)))
         {
             __try {
-                req->Value = __readmsr(req->Index);
+                outReq->Index = inReq->Index;
+                outReq->Value = __readmsr(inReq->Index);
                 status = STATUS_SUCCESS;
-                retlen = sizeof(*req);
+                retlen = sizeof(MSR_REQUEST);
             }
             __except (EXCEPTION_EXECUTE_HANDLER) {
                 status = STATUS_ACCESS_VIOLATION;
             }
         }
     }
+    // READ_MSR_AFFINITY
+    else if (IoControlCode == IOCTL_READ_MSR_AFFINITY &&
+        InputBufferLength >= sizeof(MSR_REQUEST) &&
+        OutputBufferLength >= sizeof(MSR_REQUEST))
+    {
+        PMSR_REQUEST inReq = NULL, outReq = NULL;
+        if (NT_SUCCESS(WdfRequestRetrieveInputBuffer(Request, sizeof(MSR_REQUEST), (PVOID*)&inReq, NULL)) &&
+            NT_SUCCESS(WdfRequestRetrieveOutputBuffer(Request, sizeof(MSR_REQUEST), (PVOID*)&outReq, NULL)))
+        {
+            KAFFINITY mask = (KAFFINITY)1 << inReq->Index;
+            KAFFINITY oldAff = KeSetSystemAffinityThreadEx(mask);
+
+            __try {
+                outReq->Index = inReq->Index;
+                outReq->Value = __readmsr(inReq->Index);
+                status = STATUS_SUCCESS;
+                retlen = sizeof(MSR_REQUEST);
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) {
+                status = STATUS_ACCESS_VIOLATION;
+            }
+
+            KeRevertToUserAffinityThreadEx(oldAff);
+        }
+        else {
+            status = STATUS_BUFFER_TOO_SMALL;
+        }
+    }
+    // READ_PCI
     else if (IoControlCode == IOCTL_READ_PCI &&
         InputBufferLength >= sizeof(PCI_REQUEST) &&
         OutputBufferLength >= sizeof(PCI_REQUEST))
     {
-        PPCI_REQUEST req;
-        if (NT_SUCCESS(WdfRequestRetrieveInputBuffer(Request, sizeof(*req), (PVOID*)&req, NULL)) &&
-            NT_SUCCESS(WdfRequestRetrieveOutputBuffer(Request, sizeof(*req), (PVOID*)&req, NULL)))
+        PPCI_REQUEST inReq = NULL, outReq = NULL;
+        if (NT_SUCCESS(WdfRequestRetrieveInputBuffer(Request, sizeof(PCI_REQUEST), (PVOID*)&inReq, NULL)) &&
+            NT_SUCCESS(WdfRequestRetrieveOutputBuffer(Request, sizeof(PCI_REQUEST), (PVOID*)&outReq, NULL)))
         {
             ULONG addr = (1u << 31) |
-                (req->Bus << 16) |
-                (req->Device << 11) |
-                (req->Function << 8) |
-                (req->Offset & 0xFC);
+                (inReq->Bus << 16) |
+                (inReq->Device << 11) |
+                (inReq->Function << 8) |
+                (inReq->Offset & 0xFC);
             __outdword(0xCF8, addr);
-            req->Data = __indword(0xCFC);
+            outReq->Bus = inReq->Bus;
+            outReq->Device = inReq->Device;
+            outReq->Function = inReq->Function;
+            outReq->Offset = inReq->Offset;
+            outReq->Data = __indword(0xCFC);
             status = STATUS_SUCCESS;
-            retlen = sizeof(*req);
+            retlen = sizeof(PCI_REQUEST);
+        }
+    }
+    // WRITE_PCI
+    else if (IoControlCode == IOCTL_WRITE_PCI &&
+        InputBufferLength >= sizeof(PCI_REQUEST))
+    {
+        PPCI_REQUEST inReq = NULL;
+        if (NT_SUCCESS(WdfRequestRetrieveInputBuffer(Request, sizeof(PCI_REQUEST), (PVOID*)&inReq, NULL)))
+        {
+            if (inReq->Bus == 0 && inReq->Device == 0 && inReq->Function == 0 && inReq->Offset == 0x60)
+            {
+                ULONG addr = (1u << 31) |
+                    (inReq->Bus << 16) |
+                    (inReq->Device << 11) |
+                    (inReq->Function << 8) |
+                    (inReq->Offset & 0xFC);
+                __outdword(0xCF8, addr);
+                __outdword(0xCFC, inReq->Data);
+                status = STATUS_SUCCESS;
+                retlen = sizeof(PCI_REQUEST);
+            }
+            else {
+                status = STATUS_ACCESS_DENIED;
+            }
+        }
+    }
+    // READ_PMC
+    else if (IoControlCode == IOCTL_READ_PMC &&
+        InputBufferLength >= sizeof(PMC_REQUEST) &&
+        OutputBufferLength >= sizeof(PMC_REQUEST))
+    {
+        PPMC_REQUEST inReq = NULL, outReq = NULL;
+        if (NT_SUCCESS(WdfRequestRetrieveInputBuffer(Request, sizeof(PMC_REQUEST), (PVOID*)&inReq, NULL)) &&
+            NT_SUCCESS(WdfRequestRetrieveOutputBuffer(Request, sizeof(PMC_REQUEST), (PVOID*)&outReq, NULL)))
+        {
+            __try {
+                outReq->CounterIndex = inReq->CounterIndex;
+                outReq->Value = __readpmc(inReq->CounterIndex);
+                status = STATUS_SUCCESS;
+                retlen = sizeof(PMC_REQUEST);
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) {
+                status = STATUS_ACCESS_VIOLATION;
+            }
         }
     }
 

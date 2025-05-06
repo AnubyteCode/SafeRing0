@@ -1,10 +1,17 @@
+﻿; SafeRing0DLL.def
+; ─────────────────────────────────────────────────────────────
 LIBRARY SafeRing0DLL
 EXPORTS
-    InitializeOls      @1
-    DeinitializeOls    @2
-    IsCpuid            @3
-    IsMsr              @4
-    IsPci              @5
-    Cpuid              @6
-    Rdmsr              @7
-    ReadPciConfigByte  @8
+    InitializeOls           @1
+    DeinitializeOls         @2
+    IsCpuid                 @3
+    IsMsr                   @4
+    IsPci                   @5
+    IsPmc                   @6
+    Cpuid                   @7
+    Rdmsr                   @8
+    RdmsrTx                 @9
+    Rdpmc                  @10
+    ReadPciConfigByte      @11
+    ReadPciConfigDword     @12
+    WritePciConfigDword    @13
