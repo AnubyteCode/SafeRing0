@@ -1,6 +1,6 @@
 ____
-=
-**SafeRing0: A secure and limited alternative to WinRing0**
+
+**SafeRing0: A secure/limited alternative to WinRing0**
 =
 ____
 ***The CVE-2020-14979 vulnerability arose because WinRing0 exposed a device object with a NULL DACL and 
