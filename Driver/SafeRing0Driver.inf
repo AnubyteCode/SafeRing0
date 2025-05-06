@@ -8,7 +8,6 @@ DriverVer=01/01/2025,1.0.0.1
 
 [DestinationDirs]
 DefaultDestDir = 12 ; %windir%\System32\drivers
-CoInstaller_CopyFiles = 11 ; %windir%\System32
 
 [Manufacturer]
 %MfgName%=Standard,NTamd64
@@ -19,21 +18,9 @@ CoInstaller_CopyFiles = 11 ; %windir%\System32
 [Install]
 CopyFiles=DriverCopy
 AddReg=Driver_AddReg
-Include=wdfcoinstaller.inf
-Needs=KMDFLibrary.Install
 
 [DriverCopy]
 SafeRing0Driver.sys
-
-[CoInstaller_CopyFiles]
-wdfcoinstaller01033.dll
-
-[Install.CoInstallers]
-CopyFiles=CoInstaller_CopyFiles
-AddReg=CoInstaller_AddReg
-
-[CoInstaller_AddReg]
-HKR,,CoInstallers32,0x00010000,"wdfcoinstaller01033.dll,WdfCoInstaller"
 
 [Install.Services]
 AddService=SafeRing0Driver,0x00000002,Service_Inst
