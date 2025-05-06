@@ -19,5 +19,9 @@ ____
 
 ____
 
-Because neither a raw physical-memory IOCTL is exposed nor is there a loosenening of the ACL on your device object, 
+Because neither a raw physical-memory IOCTL is exposed nor is there a loosening of the ACL on your device object, 
 you’re not vulnerable to the “map any physical page” escalation CVE-2020-14979 describes.
+
+____
+
+If you wish to add this to your project, please give credit somewhere, or ask me to make a pull req.
