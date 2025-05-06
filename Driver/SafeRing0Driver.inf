@@ -1,0 +1,35 @@
+[Version]
+Signature="$WINDOWS NT$"
+Class=Sample
+ClassGuid={4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider=%ProviderName%
+DriverVer=01/01/2025,1.0.0.0
+
+[DestinationDirs]
+DefaultDestDir = 12
+
+[Manufacturer]
+%MfgName%=Standard,NTamd64
+
+[Standard.NTamd64]
+%DeviceDesc%=Install, ROOT\SafeRing0
+
+[Install]
+CopyFiles=DriverCopy
+
+[DriverCopy]
+SafeRing0Driver.sys
+
+[Install.Services]
+AddService=SafeRing0Driver,0x00000002,Service_Inst
+
+[Service_Inst]
+ServiceType    = 1 ; SERVICE_KERNEL_DRIVER
+StartType      = 3 ; SERVICE_DEMAND_START
+ErrorControl   = 1 ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %12%\SafeRing0Driver.sys
+
+[Strings]
+ProviderName="SafeRing0 Project"
+MfgName    ="YourCompany"
+DeviceDesc ="SafeRing0 ReadOnly Driver"

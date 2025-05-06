@@ -1,0 +1,1 @@
+SafeRing0: A secure, read-only alternative to WinRing0
